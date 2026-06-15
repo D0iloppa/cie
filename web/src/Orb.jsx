@@ -128,16 +128,22 @@ function Cloud({ tone }) {
       MODEL_URL,
       (gltf) => {
         if (!alive) return;
+        gltf.scene.updateMatrixWorld(true);
         let mesh = null;
         gltf.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
         if (!mesh) { setObj(sampleSphere()); return; }
         const sampler = new MeshSurfaceSampler(mesh).build();
+        const mw = mesh.matrixWorld;          // 샘플점을 월드공간으로(본 좌표와 정렬)
+        const Z_CUT = 18;                     // 머리/주둥이/귀만 (목 아래·몸통·꼬리 제외)
         const pos = new Float32Array(N * 3);
         const v = new THREE.Vector3();
-        for (let i = 0; i < N; i++) { sampler.sample(v); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; }
-        const pts = buildPoints(pos);
-        pts.rotation.y = -Math.PI / 2.4; // 옆모습 3/4 뷰
-        setObj(pts);
+        let k = 0, guard = 0;
+        while (k < N && guard < N * 60) {
+          sampler.sample(v); v.applyMatrix4(mw); guard++;
+          if (v.z > Z_CUT) { pos[k * 3] = v.x; pos[k * 3 + 1] = v.y; pos[k * 3 + 2] = v.z; k++; }
+        }
+        while (k < N) { sampler.sample(v); v.applyMatrix4(mw); pos[k * 3] = v.x; pos[k * 3 + 1] = v.y; pos[k * 3 + 2] = v.z; k++; }
+        setObj(buildPoints(pos)); // 머리 점들이 중심정렬+스케일되어 화면을 채움(+Z=얼굴이 카메라 향함)
       },
       undefined,
       () => { if (alive) setObj(sampleSphere()); }
