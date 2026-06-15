@@ -9,8 +9,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
 
-const MODEL_URL = '/models/dog.glb';
-const N = 14000;
+// 진짜 말티즈 .glb 가 있으면 경로를 넣으면 그걸 머리 샘플링. 비우면 절차적 말티즈 머리.
+const MODEL_URL = '';
+const N = 16000;
 const TONE = { idle: '#30b8ff', thinking: '#9fb0cc', first: '#30b8ff', yes: '#2fbf71', no: '#e25555' };
 
 const SNOISE = /* glsl */`
@@ -118,12 +119,46 @@ function sampleSphere() {
   return buildPoints(pos);
 }
 
+// 단위 구 표면 방향
+function rndDir() {
+  let x, y, z, d;
+  do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; d = x * x + y * y + z * z; } while (d > 1 || d === 0);
+  d = Math.sqrt(d); return [x / d, y / d, z / d];
+}
+
+// 절차적 말티즈 머리 점구름 — 둥근 복슬 머리 + 드롭 귀 + 짧은 주둥이 + 탑낫. +Z = 정면.
+function sampleMalteseHead() {
+  const parts = [
+    { n: 0.42, c: [0, 0.05, 0], s: [1.0, 1.04, 0.96], fluff: 0.16 },     // 머리(복슬)
+    { n: 0.12, c: [0, -0.40, 0.84], s: [0.46, 0.40, 0.46], fluff: 0.05 }, // 주둥이(짧음)
+    { n: 0.14, c: [-0.86, -0.30, 0.02], s: [0.34, 0.78, 0.46], fluff: 0.14 }, // 왼쪽 드롭 귀
+    { n: 0.14, c: [0.86, -0.30, 0.02], s: [0.34, 0.78, 0.46], fluff: 0.14 },  // 오른쪽 드롭 귀
+    { n: 0.10, c: [0, 1.02, 0.04], s: [0.40, 0.40, 0.40], fluff: 0.18 },  // 탑낫(정수리 털뭉치)
+    { n: 0.08, c: [0, -0.10, 0.06], s: [1.04, 0.88, 1.0], fluff: 0.22 },  // 볼 주변 fluff(바깥 셸)
+  ];
+  const pos = new Float32Array(N * 3);
+  let k = 0;
+  for (const p of parts) {
+    const cnt = Math.round(N * p.n);
+    for (let i = 0; i < cnt && k < N; i++, k++) {
+      const [dx, dy, dz] = rndDir();
+      const f = 1 + Math.random() * p.fluff;
+      pos[k * 3] = p.c[0] + dx * p.s[0] * f;
+      pos[k * 3 + 1] = p.c[1] + dy * p.s[1] * f;
+      pos[k * 3 + 2] = p.c[2] + dz * p.s[2] * f;
+    }
+  }
+  while (k < N) { const [dx, dy, dz] = rndDir(); pos[k * 3] = dx; pos[k * 3 + 1] = dy * 1.04; pos[k * 3 + 2] = dz * 0.96; k++; }
+  return buildPoints(pos);
+}
+
 function Cloud({ tone }) {
   const { camera } = useThree();
   const [obj, setObj] = useState(null);
 
   useEffect(() => {
     let alive = true;
+    if (!MODEL_URL) { setObj(sampleMalteseHead()); return () => { alive = false; }; }
     new GLTFLoader().load(
       MODEL_URL,
       (gltf) => {
