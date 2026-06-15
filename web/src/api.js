@@ -23,7 +23,7 @@ async function jget(path) {
   return r.json();
 }
 
-export const ask = ({ label, image }) => jpost('/ask', { label, image });
+export const ask = (body) => jpost('/ask', body);
 export const logMeal = ({ label, verdict }) => jpost('/log', { label, verdict });
 export const getHistory = (limit = 30) => jget(`/history?limit=${limit}`);
 export const getSettings = () => jget('/settings');

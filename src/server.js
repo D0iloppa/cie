@@ -4,7 +4,7 @@ const path = require('path');
 const express = require('express');
 const store = require('./db');
 const { computeStatus } = require('./verdict');
-const { judgeFood, aiEnabled } = require('./ai');
+const { runAgent, aiEnabled } = require('./ai');
 
 const app = express();
 app.use(express.json({ limit: '8mb' })); // base64 사진 첨부 수용
@@ -27,7 +27,7 @@ async function buildStatus(uk) {
   return { user: uk, settings: s, aiEnabled: aiEnabled(), status };
 }
 
-// 타이밍 상태 + (선택)AI 음식판단 → 상징적 한 줄 결과.
+// 타이밍 상태 + (선택)음식판단 → 상징적 한 줄 결과.
 function compose(state, canEatTiming, verdict) {
   const breaksFast = verdict ? verdict.breaks_fast : null;
   const canEat = breaksFast === false ? true : canEatTiming;
@@ -55,7 +55,7 @@ function compose(state, canEatTiming, verdict) {
   return { canEat, headline, tone, message };
 }
 
-// 입력(이미지/라벨) 정규화 — body 또는 멀티파트 대신 base64 JSON 사용.
+// 입력(이미지/라벨) 정규화 — base64 JSON.
 function readFood(body) {
   const label = body?.label ? body.label.toString().trim() : null;
   let image = null;
@@ -67,41 +67,84 @@ function readFood(body) {
 
 const api = express.Router();
 
-// 지금 먹어도 되나? (타이밍만)
+// 타이밍만 (메뉴/상태 표시용)
 api.get('/status', async (req, res, next) => {
   try { res.json(await buildStatus(userKey(req))); } catch (e) { next(e); }
 });
 
-// 메인 질문: 먹/마실 것(텍스트 또는 사진) → 타이밍 + AI 판단을 합친 상징적 결과. 기록 안 함.
+// 메인 질문 — 컨텍스트 구성 에이전트(멀티턴).
+//   첫 호출: { label?, image? }
+//   이어가기: { history, answer }
+//   응답: { phase:'ask', question, quick_replies, history } | { phase:'decide', headline, message, tone, canEat, ... }
 api.post('/ask', async (req, res, next) => {
   try {
     const uk = userKey(req);
-    const { label, image } = readFood(req.body);
-    if (!label && !image) return res.status(400).json({ error: 'label 또는 image 가 필요합니다' });
+    const settings = await store.loadSettings(uk);
+    const now = Date.now();
 
-    const wrap = await buildStatus(uk);
-    let verdict = null;
-    try { verdict = await judgeFood({ label, image }); }
-    catch (e) { console.error('[cie] judgeFood failed:', e.message); }
+    // AI 미연동 → 결정론 폴백(질문 없이 DB 기준).
+    if (!aiEnabled()) {
+      const wrap = await buildStatus(uk);
+      const { label } = readFood(req.body);
+      const c = compose(wrap.status.state, wrap.status.canEat, null);
+      return res.json({ phase: 'decide', aiEnabled: false, label: label || null, verdict: null, timing: wrap.status, ...c });
+    }
 
+    // 대화 메시지 구성
+    let messages;
+    if (Array.isArray(req.body?.history) && req.body.history.length) {
+      messages = [...req.body.history, { role: 'user', content: (req.body?.answer || '').toString() }];
+    } else {
+      const { label, image } = readFood(req.body);
+      if (!label && !image) return res.status(400).json({ error: 'label 또는 image 가 필요합니다' });
+      const content = [];
+      if (image) content.push({ type: 'image', source: { type: 'base64', media_type: image.media_type, data: image.data } });
+      content.push({ type: 'text', text: label ? `지금 먹/마시려는 것: ${label}` : '첨부한 사진 속에서 먹/마시려는 것을 식별해줘.' });
+      messages = [{ role: 'user', content }];
+    }
+
+    // DB 컨텍스트 (라벨 포함 최근 식사, 시간 오름차순)
+    const recent = await store.listMeals(uk, 10);
+    const dbMeals = recent.map((r) => ({ at: r.ate_at, what: r.label })).reverse();
+
+    const out = await runAgent(messages, { now, settings, dbMeals });
+
+    if (out.phase === 'ask') {
+      const history = [...messages, { role: 'assistant', content: JSON.stringify(out) }];
+      return res.json({
+        phase: 'ask', aiEnabled: true,
+        question: out.question || '', quick_replies: out.quick_replies || [], history,
+      });
+    }
+
+    // decide — 되물어 확인된 끼 중 DB에 없는 것 백필
+    const existing = await store.loadRecentMealTimes(uk);
+    for (const m of out.meals || []) {
+      const t = Date.parse(m.when);
+      if (isNaN(t)) continue;
+      if (existing.some((e) => Math.abs(e - t) < 5 * 60 * 1000)) continue; // ~5분 내 중복 제외
+      await store.insertMeal(uk, new Date(t), m.what, { breaks_fast: m.breaks_fast }, '에이전트 백필');
+    }
+
+    const wrap = await buildStatus(uk); // 백필 반영해 재계산
+    const verdict = out.current
+      ? { food: out.current.what, breaks_fast: out.current.breaks_fast, reason: out.current.reason }
+      : null;
     const c = compose(wrap.status.state, wrap.status.canEat, verdict);
     res.json({
-      aiEnabled: aiEnabled(),
-      label: verdict?.food || label || null,
-      verdict,
-      timing: wrap.status,
-      ...c,
+      phase: 'decide', aiEnabled: true,
+      label: out.current?.what || null, verdict, timing: wrap.status, ...c,
     });
   } catch (e) { next(e); }
 });
 
-// 식사 기록 (결과 화면의 "먹었어요" 확인). label 은 /ask 가 식별한 음식명을 그대로 받는다.
+// 식사 기록 ("먹었어요" 확인). label/verdict 는 /ask 결과를 그대로 받는다.
 api.post('/log', async (req, res, next) => {
   try {
     const uk = userKey(req);
     const label = req.body?.label ? req.body.label.toString().trim() : null;
     const note = req.body?.note ? req.body.note.toString() : null;
-    const verdict = req.body?.verdict || null; // /ask 결과를 그대로 넘겨 재호출 비용 절약
+    const verdict = req.body?.verdict || null;
     const ateAt = req.body?.ate_at ? new Date(req.body.ate_at) : new Date();
     if (isNaN(ateAt.getTime())) return res.status(400).json({ error: 'invalid ate_at' });
 
