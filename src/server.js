@@ -135,12 +135,18 @@ api.post('/ask', async (req, res, next) => {
       return res.json({ phase: 'decide', aiEnabled: true, degraded: true, label: readFood(req.body).label || null, verdict: null, timing: wrap.status, ...c });
     }
 
+    const history = [...messages, { role: 'assistant', content: JSON.stringify(out) }];
+
     if (out.phase === 'ask') {
-      const history = [...messages, { role: 'assistant', content: JSON.stringify(out) }];
       return res.json({
         phase: 'ask', aiEnabled: true,
         question: out.question || '', quick_replies: out.quick_replies || [], history,
       });
+    }
+
+    // 판정 뒤 단순 후속 답변 (맥락 유지, 기록 변화 없음)
+    if (out.phase === 'reply') {
+      return res.json({ phase: 'reply', aiEnabled: true, message: out.message || '', history });
     }
 
     // decide — 되물어 확인된 끼 중 DB에 없는 것 백필
@@ -160,7 +166,7 @@ api.post('/ask', async (req, res, next) => {
     const c = compose(wrap.status.state, wrap.status.canEat, verdict);
     res.json({
       phase: 'decide', aiEnabled: true,
-      label: out.current?.what || null, verdict, timing: wrap.status, ...c,
+      label: out.current?.what || null, verdict, timing: wrap.status, history, ...c,
     });
   } catch (e) { next(e); }
 });

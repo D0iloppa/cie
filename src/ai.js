@@ -22,19 +22,22 @@ const SYSTEM = [
   '- 한 번에 질문 하나만, 한국어로 간결하게. quick_replies 로 흔한 답 2~4개 제시.',
   '- 충분히 파악되면 phase="decide": meals 에는 "지금 항목 이전에 이미 먹은 끼"만 넣어라(기존 기록 + 되물어 새로 확인된 끼). 지금 물어보는 항목은 meals 에 넣지 말고 current 에만 둬라(아직 안 먹었으므로).',
   '- when 은 주어진 현재시각(now) 기준 ISO8601 절대시각으로 환산.',
+  '- 이미 한 번 판정(decide)한 뒤 사용자가 후속 질문을 하면 맥락을 유지하고: 다른 항목/시점 판단이 필요하면 phase="decide", 정보가 더 필요하면 phase="ask", 단순 설명·잡담이면 phase="reply"(message)로 답하라.',
   '공복 판정: 물·블랙커피·무가당차·무칼로리 전해질은 공복 안 깸(false). 칼로리·당·단백질·우유/크림은 깸(true).',
 ].join('\n');
 
 const JSON_SPEC = [
   '아래 JSON 객체 하나만 출력한다. 코드블록·설명·여는말 금지, 순수 JSON 만.',
   '{',
-  '  "phase": "ask" | "decide",',
+  '  "phase": "ask" | "decide" | "reply",',
   '  // phase=ask 일 때:',
   '  "question": "사용자에게 물을 질문(한국어, 하나)",',
   '  "quick_replies": ["흔한 답1", "흔한 답2"],',
   '  // phase=decide 일 때:',
   '  "meals": [ { "when": "ISO8601", "what": "이미 먹은 항목", "breaks_fast": true|false } ],  // 지금 항목 제외, 과거 끼만',
-  '  "current": { "what": "지금 항목", "breaks_fast": true|false, "reason": "한국어 한두문장" }',
+  '  "current": { "what": "지금 항목", "breaks_fast": true|false, "reason": "한국어 한두문장" },',
+  '  // phase=reply 일 때(판정 뒤 단순 후속 답변):',
+  '  "message": "한국어 대화체 답변"',
   '}',
 ].join('\n');
 
