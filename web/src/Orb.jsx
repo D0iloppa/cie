@@ -1,14 +1,17 @@
-// 앰비언트 오브 — WebGL 파티클(점구름). GLSL 커스텀 셰이더.
-//  · simplex curl-noise 로 유기적 변위 (idle 미세 / thinking 격렬 scatter)
-//  · 마우스를 z=0 평면에 투영해 오브젝트 공간 좌표로 → 입자 3D 반발(wake)
-//  · 상태(tone)별 색/scatter 보간, additive glow 소프트 포인트
-import { useMemo, useRef } from 'react';
+// 앰비언트 오브 — WebGL 파티클. CC0 canine(.glb) 표면을 점샘플링한 '강아지' 점구름.
+//  · GLTFLoader + MeshSurfaceSampler 로 모델 표면에서 N개 점 추출 → 중심정렬/스케일
+//  · GLSL 셰이더: simplex curl-noise 미세 변위(형상 유지) / thinking 시 scatter
+//  · 마우스를 z=0 평면에 투영 → 오브젝트 공간 좌표로 입자 3D 반발(wake) + 시차 틸트
+//  · 모델 로드 실패 시 구체로 폴백. 모델 교체(말티즈 .glb)는 MODEL_URL 만 바꾸면 됨.
+import { useEffect, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
 
-const TONE = {
-  idle: '#30b8ff', thinking: '#9fb0cc', first: '#30b8ff', yes: '#2fbf71', no: '#e25555',
-};
+const MODEL_URL = '/models/dog.glb';
+const N = 14000;
+const TONE = { idle: '#30b8ff', thinking: '#9fb0cc', first: '#30b8ff', yes: '#2fbf71', no: '#e25555' };
 
 const SNOISE = /* glsl */`
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
@@ -49,14 +52,14 @@ attribute float aSeed; varying float vGlow;
 ${SNOISE}
 void main(){
   vec3 p = position;
-  float amp = mix(0.05, 0.55, uScatter);
-  p += curlNoise(p*0.8 + uTime*0.1 + aSeed) * amp;
+  float amp = mix(0.02, 0.45, uScatter);              // idle 엔 미세(형상 유지), thinking 엔 scatter
+  p += curlNoise(p*1.1 + uTime*0.1 + aSeed) * amp;
   vec3 dm = p - uMouse; float dist = length(dm);
-  float push = smoothstep(0.9, 0.0, dist) * 0.5;
+  float push = smoothstep(0.7, 0.0, dist) * 0.4;
   p += normalize(dm + 1e-4) * push;
   vGlow = 0.45 + 0.55*sin(uTime*1.6 + aSeed*6.283) + push*2.2;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
-  float sz = uSize * (0.55 + 0.75*fract(aSeed)) * (1.0 + push*1.8);
+  float sz = uSize * (0.55 + 0.75*fract(aSeed)) * (1.0 + push*1.6);
   gl_PointSize = sz * uPixelRatio / max(-mv.z, 0.001);
   gl_Position = projectionMatrix * mv;
 }`;
@@ -71,58 +74,94 @@ void main(){
   gl_FragColor = vec4(col, a * clamp(0.45 + 0.55*vGlow, 0.0, 1.0));
 }`;
 
+function makeMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uScatter: { value: 0 },
+      uMouse: { value: new THREE.Vector3(99, 99, 99) },
+      uColor: { value: new THREE.Color(TONE.idle) },
+      uSize: { value: 24 },
+      uPixelRatio: { value: Math.min(typeof devicePixelRatio !== 'undefined' ? devicePixelRatio : 1, 2) },
+    },
+    vertexShader: VERT, fragmentShader: FRAG,
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
+  });
+}
+
+// positions(Float32Array) → 중심정렬 + 반경 ~1.25 로 스케일 → THREE.Points
+function buildPoints(positions) {
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < positions.length; i += 3) box.expandByPoint(v.set(positions[i], positions[i + 1], positions[i + 2]));
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const scale = 2.5 / Math.max(size.x, size.y, size.z);
+  const seeds = new Float32Array(positions.length / 3);
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] = (positions[i] - center.x) * scale;
+    positions[i + 1] = (positions[i + 1] - center.y) * scale;
+    positions[i + 2] = (positions[i + 2] - center.z) * scale;
+    seeds[i / 3] = Math.random() * 100;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+  return new THREE.Points(geo, makeMaterial());
+}
+
+function sampleSphere() {
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const t = i / N, phi = Math.acos(1 - 2 * t), th = Math.PI * (1 + Math.sqrt(5)) * i;
+    pos[i * 3] = Math.sin(phi) * Math.cos(th); pos[i * 3 + 1] = Math.sin(phi) * Math.sin(th); pos[i * 3 + 2] = Math.cos(phi);
+  }
+  return buildPoints(pos);
+}
+
 function Cloud({ tone }) {
   const { camera } = useThree();
-  const N = 9000;
+  const [obj, setObj] = useState(null);
 
-  const obj = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(N * 3);
-    const seed = new Float32Array(N);
-    const R = 1.25;
-    for (let i = 0; i < N; i++) {
-      const t = i / N;
-      const phi = Math.acos(1 - 2 * t);
-      const theta = Math.PI * (1 + Math.sqrt(5)) * i;
-      const rr = R * (0.9 + Math.random() * 0.1);
-      pos[i * 3] = Math.sin(phi) * Math.cos(theta) * rr;
-      pos[i * 3 + 1] = Math.sin(phi) * Math.sin(theta) * rr;
-      pos[i * 3 + 2] = Math.cos(phi) * rr;
-      seed[i] = Math.random() * 100;
-    }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 }, uScatter: { value: 0 },
-        uMouse: { value: new THREE.Vector3(99, 99, 99) },
-        uColor: { value: new THREE.Color(TONE.idle) },
-        uSize: { value: 26 },
-        uPixelRatio: { value: Math.min(typeof devicePixelRatio !== 'undefined' ? devicePixelRatio : 1, 2) },
+  useEffect(() => {
+    let alive = true;
+    new GLTFLoader().load(
+      MODEL_URL,
+      (gltf) => {
+        if (!alive) return;
+        let mesh = null;
+        gltf.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+        if (!mesh) { setObj(sampleSphere()); return; }
+        const sampler = new MeshSurfaceSampler(mesh).build();
+        const pos = new Float32Array(N * 3);
+        const v = new THREE.Vector3();
+        for (let i = 0; i < N; i++) { sampler.sample(v); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; }
+        const pts = buildPoints(pos);
+        pts.rotation.y = -Math.PI / 2.4; // 옆모습 3/4 뷰
+        setObj(pts);
       },
-      vertexShader: VERT, fragmentShader: FRAG,
-      transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending,
-    });
-    return new THREE.Points(geo, mat);
+      undefined,
+      () => { if (alive) setObj(sampleSphere()); }
+    );
+    return () => { alive = false; };
   }, []);
 
-  const aux = useMemo(() => ({
+  const aux = useRef({
     color: new THREE.Color(TONE.idle),
     plane: new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),
     ray: new THREE.Raycaster(),
     hit: new THREE.Vector3(),
-  }), []);
+  }).current;
 
   useFrame((st, dt) => {
+    if (!obj) return;
     const u = obj.material.uniforms;
     u.uTime.value += dt;
     u.uColor.value.lerp(aux.color.set(TONE[tone] || TONE.idle), 0.05);
     const targetScatter = tone === 'thinking' ? 1 : 0;
     u.uScatter.value += (targetScatter - u.uScatter.value) * 0.06;
 
-    obj.rotation.y += dt * 0.08;
-    obj.rotation.x += (st.pointer.y * 0.45 - obj.rotation.x) * 0.04;
-    obj.rotation.z += (-st.pointer.x * 0.25 - obj.rotation.z) * 0.04;
+    obj.rotation.y += dt * 0.18;
+    obj.rotation.x += (st.pointer.y * 0.35 - obj.rotation.x) * 0.04;
 
     aux.ray.setFromCamera(st.pointer, camera);
     if (aux.ray.ray.intersectPlane(aux.plane, aux.hit)) {
@@ -131,19 +170,14 @@ function Cloud({ tone }) {
     }
   });
 
-  return <primitive object={obj} />;
+  return obj ? <primitive object={obj} /> : null;
 }
 
 export default function Orb({ tone = 'idle', label }) {
   const dpr = useRef([1, 2]);
   return (
     <div className={`orb-wrap tone-${tone}`}>
-      <Canvas
-        className="orb-canvas"
-        camera={{ position: [0, 0, 4], fov: 45 }}
-        dpr={dpr.current}
-        gl={{ alpha: true, antialias: true }}
-      >
+      <Canvas className="orb-canvas" camera={{ position: [0, 0, 4], fov: 45 }} dpr={dpr.current} gl={{ alpha: true, antialias: true }}>
         <Cloud tone={tone} />
       </Canvas>
       {label && <div className="orb-label">{label}</div>}
