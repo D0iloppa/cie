@@ -1,4 +1,5 @@
 // Can I Eat — 독립 실행 서버. 정적 프론트 + /api/* 판정/기록 API.
+// DB 는 공유 Postgres(devdb) 안의 전용 database `cie`.
 const path = require('path');
 const express = require('express');
 const store = require('./db');
@@ -14,9 +15,9 @@ function userKey(req) {
   return (req.query.user || req.body?.user || 'me').toString().slice(0, 64);
 }
 
-function buildStatus(uk) {
-  const s = store.loadSettings(uk);
-  const meals = store.loadRecentMealTimes(uk);
+async function buildStatus(uk) {
+  const s = await store.loadSettings(uk);
+  const meals = await store.loadRecentMealTimes(uk);
   const status = computeStatus({
     now: Date.now(),
     meals,
@@ -28,9 +29,9 @@ function buildStatus(uk) {
 const api = express.Router();
 
 // 지금 먹어도 되나? (타이밍 판정)
-api.get('/status', (req, res, next) => {
+api.get('/status', async (req, res, next) => {
   try {
-    res.json(buildStatus(userKey(req)));
+    res.json(await buildStatus(userKey(req)));
   } catch (e) { next(e); }
 });
 
@@ -59,29 +60,29 @@ api.post('/log', async (req, res, next) => {
       catch (e) { console.error('[cie] judgeFood failed:', e.message); }
     }
 
-    const logged = store.insertMeal(uk, ateAt.toISOString(), label, verdict, note);
-    res.json({ logged, status: buildStatus(uk).status });
+    const logged = await store.insertMeal(uk, ateAt, label, verdict, note);
+    res.json({ logged, status: (await buildStatus(uk)).status });
   } catch (e) { next(e); }
 });
 
 // 기록 조회
-api.get('/history', (req, res, next) => {
+api.get('/history', async (req, res, next) => {
   try {
     const uk = userKey(req);
     const limit = Math.min(parseInt(req.query.limit, 10) || 30, 200);
-    res.json({ user: uk, meals: store.listMeals(uk, limit) });
+    res.json({ user: uk, meals: await store.listMeals(uk, limit) });
   } catch (e) { next(e); }
 });
 
 // 설정 조회/저장
-api.get('/settings', (req, res, next) => {
+api.get('/settings', async (req, res, next) => {
   try {
     const uk = userKey(req);
-    res.json({ user: uk, settings: store.loadSettings(uk) });
+    res.json({ user: uk, settings: await store.loadSettings(uk) });
   } catch (e) { next(e); }
 });
 
-api.put('/settings', (req, res, next) => {
+api.put('/settings', async (req, res, next) => {
   try {
     const uk = userKey(req);
     const win = parseInt(req.body?.eating_window_hours, 10);
@@ -89,7 +90,7 @@ api.put('/settings', (req, res, next) => {
     if (!(win > 0 && win <= 24) || !(fast > 0 && fast <= 24)) {
       return res.status(400).json({ error: 'eating_window_hours/min_fast_hours must be 1-24' });
     }
-    res.json({ user: uk, settings: store.saveSettings(uk, win, fast) });
+    res.json({ user: uk, settings: await store.saveSettings(uk, win, fast) });
   } catch (e) { next(e); }
 });
 
@@ -101,4 +102,10 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: 'internal error' });
 });
 
-app.listen(PORT, () => console.log(`[cie] listening on :${PORT}`));
+// 스키마(테이블) 멱등 적용 후 기동. DB 미연결이면 종료 → 컨테이너 재시작으로 재시도.
+store.initSchema()
+  .then(() => app.listen(PORT, () => console.log(`[cie] listening on :${PORT}`)))
+  .catch((e) => {
+    console.error('[cie] schema init failed (db 연결 확인):', e.message);
+    process.exit(1);
+  });

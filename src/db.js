@@ -1,92 +1,84 @@
-// Can I Eat — 자체 SQLite 저장소 (공유 인프라 의존 없음).
-// DB 파일 경로는 CIE_DB_PATH 로 주입 (도커에선 볼륨 마운트), 기본 ./data/cie.db.
+// Can I Eat — 저장소. 공유 Postgres 컨테이너(devdb) 안의 전용 database `cie` 를 쓴다.
+// 연결 정보는 환경변수로 주입 (docker-compose 의 cie environment).
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 
-const DB_PATH = process.env.CIE_DB_PATH || path.join(__dirname, '..', 'data', 'cie.db');
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const pool = new Pool({
+  host: process.env.DB_HOST || 'devdb',
+  port: Number(process.env.DB_PORT || 5432),
+  user: process.env.DB_USER || 'doil',
+  password: process.env.DB_PASSWORD,   // .env (gitignore) 에서만 주입 — 커밋 금지
+  database: process.env.DB_NAME || 'cie',
+  max: 5,
+});
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-
-// 스키마 (멱등)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS setting (
-    user_key            TEXT PRIMARY KEY,
-    eating_window_hours INTEGER NOT NULL DEFAULT 8,
-    min_fast_hours      INTEGER NOT NULL DEFAULT 16,
-    updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS meal_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_key   TEXT NOT NULL,
-    ate_at     TEXT NOT NULL,
-    label      TEXT,
-    ai_verdict TEXT,
-    note       TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_meal_log_user_time ON meal_log (user_key, ate_at DESC);
-`);
+pool.on('error', (e) => console.error('[cie][db] pool error:', e.message));
 
 const DEFAULTS = { eating_window_hours: 8, min_fast_hours: 16 };
 
-function loadSettings(uk) {
-  const row = db
-    .prepare('SELECT eating_window_hours, min_fast_hours FROM setting WHERE user_key = ?')
-    .get(uk);
-  return row || { ...DEFAULTS };
+// 테이블 멱등 적용 (database `cie` 자체는 README 부트스트랩에서 1회 생성).
+async function initSchema() {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
+  await pool.query(sql);
 }
 
-function saveSettings(uk, win, fast) {
-  db.prepare(
+async function loadSettings(uk) {
+  const { rows } = await pool.query(
+    'SELECT eating_window_hours, min_fast_hours FROM setting WHERE user_key = $1',
+    [uk]
+  );
+  return rows[0] || { ...DEFAULTS };
+}
+
+async function saveSettings(uk, win, fast) {
+  const { rows } = await pool.query(
     `INSERT INTO setting (user_key, eating_window_hours, min_fast_hours, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
-     ON CONFLICT(user_key) DO UPDATE SET
-       eating_window_hours = excluded.eating_window_hours,
-       min_fast_hours      = excluded.min_fast_hours,
-       updated_at          = datetime('now')`
-  ).run(uk, win, fast);
-  return { eating_window_hours: win, min_fast_hours: fast };
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_key)
+     DO UPDATE SET eating_window_hours = EXCLUDED.eating_window_hours,
+                   min_fast_hours = EXCLUDED.min_fast_hours,
+                   updated_at = NOW()
+     RETURNING eating_window_hours, min_fast_hours`,
+    [uk, win, fast]
+  );
+  return rows[0];
 }
 
 // 최근 3일치 식사 시각(ms epoch) — 윈도우/공복 판정에 충분.
-function loadRecentMealTimes(uk) {
-  const rows = db
-    .prepare(
-      `SELECT ate_at FROM meal_log
-         WHERE user_key = ? AND ate_at > datetime('now', '-3 days')
-         ORDER BY ate_at`
-    )
-    .all(uk);
-  return rows.map((r) => Date.parse(r.ate_at));
+async function loadRecentMealTimes(uk) {
+  const { rows } = await pool.query(
+    `SELECT ate_at FROM meal_log
+       WHERE user_key = $1 AND ate_at > NOW() - INTERVAL '3 days'
+       ORDER BY ate_at`,
+    [uk]
+  );
+  return rows.map((r) => new Date(r.ate_at).getTime());
 }
 
-function insertMeal(uk, ateAtIso, label, verdict, note) {
-  const info = db
-    .prepare(
-      `INSERT INTO meal_log (user_key, ate_at, label, ai_verdict, note)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(uk, ateAtIso, label, verdict ? JSON.stringify(verdict) : null, note);
-  return db
-    .prepare('SELECT id, ate_at, label, ai_verdict, note FROM meal_log WHERE id = ?')
-    .get(info.lastInsertRowid);
+async function insertMeal(uk, ateAt, label, verdict, note) {
+  const { rows } = await pool.query(
+    `INSERT INTO meal_log (user_key, ate_at, label, ai_verdict, note)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, ate_at, label, ai_verdict, note`,
+    [uk, ateAt, label, verdict ? JSON.stringify(verdict) : null, note]
+  );
+  return rows[0];
 }
 
-function listMeals(uk, limit) {
-  return db
-    .prepare(
-      `SELECT id, ate_at, label, ai_verdict, note FROM meal_log
-         WHERE user_key = ? ORDER BY ate_at DESC LIMIT ?`
-    )
-    .all(uk, limit);
+async function listMeals(uk, limit) {
+  const { rows } = await pool.query(
+    `SELECT id, ate_at, label, ai_verdict, note FROM meal_log
+       WHERE user_key = $1 ORDER BY ate_at DESC LIMIT $2`,
+    [uk, limit]
+  );
+  return rows;
 }
 
 module.exports = {
-  db,
+  pool,
   DEFAULTS,
+  initSchema,
   loadSettings,
   saveSettings,
   loadRecentMealTimes,

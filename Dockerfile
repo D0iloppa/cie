@@ -3,17 +3,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# better-sqlite3 네이티브 빌드에 필요한 도구 (빌드 후 정리)
 COPY package.json package-lock.json* ./
-RUN apk add --no-cache --virtual .build-deps python3 make g++ \
- && npm install --omit=dev \
- && apk del .build-deps
+RUN npm install --omit=dev
 
 COPY . .
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV CIE_DB_PATH=/app/data/cie.db
 
 EXPOSE 3000
 
