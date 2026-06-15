@@ -42,60 +42,13 @@ body {
 /* Ask 영역 */
 .ask { width: 100%; max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 22px; }
 
-/* ===== 오브 ===== */
-.orb-wrap { position: relative; width: 280px; height: 280px; display: grid; place-items: center; }
-.orb-aurora {
-  position: absolute; width: 230px; height: 230px; border-radius: 50%;
-  background: conic-gradient(from 0deg, var(--glow), var(--glow2, #006aaa), var(--glow), var(--glow2, #006aaa), var(--glow));
-  filter: blur(34px); opacity: .55; animation: spin 9s linear infinite;
-}
-.orb-halo {
-  position: absolute; width: 150px; height: 150px; border-radius: 50%;
-  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--glow) 70%, transparent), transparent 70%);
-  filter: blur(8px); animation: breathe 4.2s ease-in-out infinite;
-}
-.orb-core {
-  position: relative; width: 124px; height: 124px; border-radius: 50%; display: grid; place-items: center;
-  background: radial-gradient(circle at 35% 28%, #2a3340, #11141b 72%);
-  box-shadow: 0 0 50px -6px var(--glow), inset 0 1px 1px rgba(255,255,255,.16), inset 0 0 26px rgba(255,255,255,.04);
-  animation: breathe 4.2s ease-in-out infinite; transition: box-shadow .5s var(--ease);
-}
-.orb-emoji { font-size: 46px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.4)); }
-.orb-ring {
-  position: absolute; border-radius: 50%; border: 1px solid var(--glow);
-  opacity: .25; animation: ripple 3.6s var(--ease) infinite;
-}
-.orb-ring.r1 { width: 150px; height: 150px; }
-.orb-ring.r2 { width: 150px; height: 150px; animation-delay: 1.2s; }
-.orb-ring.r3 { width: 150px; height: 150px; animation-delay: 2.4s; }
-@keyframes ripple { 0% { transform: scale(.85); opacity: .4; } 80% { opacity: .04; } 100% { transform: scale(1.7); opacity: 0; } }
-.orb-orbit { position: absolute; width: 196px; height: 196px; animation: spin 12s linear infinite; }
-.orb-orbit i {
-  position: absolute; left: 50%; top: -3px; width: 7px; height: 7px; margin-left: -3px;
-  border-radius: 50%; background: var(--glow); box-shadow: 0 0 12px 2px var(--glow);
-}
-.orb-orbit i:nth-child(1) { transform-origin: 3px 101px; }
-.orb-orbit i:nth-child(2) { transform: rotate(120deg); transform-origin: 3px 101px; }
-.orb-orbit i:nth-child(3) { transform: rotate(240deg); transform-origin: 3px 101px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes breathe { 0%,100% { transform: scale(.97); } 50% { transform: scale(1.05); } }
+/* ===== 오브 (WebGL 파티클) ===== */
+.orb-wrap { position: relative; width: 320px; height: 320px; }
+.orb-canvas { position: absolute; inset: 0; }
 .orb-label {
-  position: absolute; bottom: -16px; width: 300px; text-align: center;
+  position: absolute; bottom: 6px; left: 0; width: 100%; text-align: center;
   color: var(--muted); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
-}
-
-/* tone별 색 */
-.tone-idle     { --glow: #30b8ff; --glow2: #006aaa; }
-.tone-thinking { --glow: #6f86a8; --glow2: #3a4a63; }
-.tone-first    { --glow: #30b8ff; --glow2: #006aaa; }
-.tone-yes      { --glow: #2fbf71; --glow2: #1c7d4a; }
-.tone-no       { --glow: #e25555; --glow2: #a33; }
-.tone-thinking .orb-aurora { animation-duration: 2.6s; }
-.tone-thinking .orb-orbit  { animation-duration: 3.4s; }
-.tone-thinking .orb-core, .tone-thinking .orb-halo { animation-duration: 1.5s; }
-.tone-thinking .orb-ring   { animation-duration: 1.6s; }
-@media (prefers-reduced-motion: reduce) {
-  .orb-aurora, .orb-orbit, .orb-ring, .orb-core, .orb-halo { animation: none; }
+  pointer-events: none;
 }
 
 /* 버튼/입력 */
