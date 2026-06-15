@@ -1,6 +1,18 @@
 -- Can I Eat 스키마. 공유 Postgres 컨테이너 안의 전용 database `cie` 에 구축한다.
 -- (database 자체 생성은 README 의 1회 부트스트랩 참고. 아래 테이블은 앱 기동 시 멱등 적용.)
 
+-- 계정 — 게스트(UUID)로 시작, 추후 OAuth 계정과 연동.
+-- user_key 가 곧 게스트 UUID. setting/meal_log 가 이 키로 묶인다.
+CREATE TABLE IF NOT EXISTS account (
+  user_key       TEXT PRIMARY KEY,                 -- 게스트 UUID
+  is_guest       BOOLEAN     NOT NULL DEFAULT true,
+  oauth_provider TEXT,                             -- 추후 연동(google 등)
+  oauth_subject  TEXT,                             -- 추후 연동(OAuth sub)
+  display_name   TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 사용자별 섭식 설정 (단일 사용자라도 user_key 로 분리)
 CREATE TABLE IF NOT EXISTS setting (
   user_key            VARCHAR(64) PRIMARY KEY,

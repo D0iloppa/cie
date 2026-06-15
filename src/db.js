@@ -15,7 +15,35 @@ const pool = new Pool({
 
 pool.on('error', (e) => console.error('[cie][db] pool error:', e.message));
 
+const { randomUUID } = require('crypto');
+
 const DEFAULTS = { eating_window_hours: 8, min_fast_hours: 16 };
+
+// 새 게스트 계정 생성 → UUID 반환
+async function createGuest() {
+  const uk = randomUUID();
+  await pool.query('INSERT INTO account (user_key, is_guest) VALUES ($1, true)', [uk]);
+  return uk;
+}
+
+// 들어온 user_key 의 계정을 보장(없으면 게스트로 생성) + last_seen 갱신
+async function touchAccount(uk) {
+  await pool.query(
+    `INSERT INTO account (user_key, is_guest, last_seen_at)
+     VALUES ($1, true, NOW())
+     ON CONFLICT (user_key) DO UPDATE SET last_seen_at = NOW()`,
+    [uk]
+  );
+}
+
+async function getAccount(uk) {
+  const { rows } = await pool.query(
+    `SELECT user_key, is_guest, oauth_provider, display_name, created_at
+       FROM account WHERE user_key = $1`,
+    [uk]
+  );
+  return rows[0] || null;
+}
 
 // 테이블 멱등 적용 (database `cie` 자체는 README 부트스트랩에서 1회 생성).
 async function initSchema() {
@@ -79,6 +107,9 @@ module.exports = {
   pool,
   DEFAULTS,
   initSchema,
+  createGuest,
+  touchAccount,
+  getAccount,
   loadSettings,
   saveSettings,
   loadRecentMealTimes,

@@ -67,6 +67,23 @@ function readFood(body) {
 
 const api = express.Router();
 
+// 게스트 가입 — 새 UUID 발급(클라가 localStorage 에 보관). 추후 OAuth 계정과 연동.
+api.post('/guest', async (req, res, next) => {
+  try {
+    const user = await store.createGuest();
+    res.json({ user, is_guest: true });
+  } catch (e) { next(e); }
+});
+
+// 현재 계정 정보 (메뉴 '계정 연동' 표시용)
+api.get('/account', async (req, res, next) => {
+  try {
+    const uk = userKey(req);
+    await store.touchAccount(uk);
+    res.json({ user: uk, account: await store.getAccount(uk) });
+  } catch (e) { next(e); }
+});
+
 // 타이밍만 (메뉴/상태 표시용)
 api.get('/status', async (req, res, next) => {
   try { res.json(await buildStatus(userKey(req))); } catch (e) { next(e); }
@@ -79,6 +96,7 @@ api.get('/status', async (req, res, next) => {
 api.post('/ask', async (req, res, next) => {
   try {
     const uk = userKey(req);
+    await store.touchAccount(uk);
     const settings = await store.loadSettings(uk);
     const now = Date.now();
 
@@ -150,6 +168,7 @@ api.post('/ask', async (req, res, next) => {
 api.post('/log', async (req, res, next) => {
   try {
     const uk = userKey(req);
+    await store.touchAccount(uk);
     const label = req.body?.label ? req.body.label.toString().trim() : null;
     const note = req.body?.note ? req.body.note.toString() : null;
     const verdict = req.body?.verdict || null;

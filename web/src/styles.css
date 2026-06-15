@@ -170,3 +170,6 @@ input[type=text] {
 .set { display: flex; flex-direction: column; gap: 14px; }
 .set label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
 .set input { background: #0e1118; border: 1px solid var(--line); color: var(--fg); border-radius: 10px; padding: 11px; font-size: 15px; }
+.acc-row { display: flex; align-items: center; gap: 10px; }
+.badge-guest { background: rgba(79,140,255,.15); color: #8ab4ff; border: 1px solid rgba(79,140,255,.4); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+.set button:disabled { opacity: .55; cursor: not-allowed; }

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { getHistory, getSettings, saveSettings } from './api.js';
+import { getHistory, getSettings, saveSettings, getAccount, uid } from './api.js';
 
 const ITEMS = [
   { key: 'history', label: '이력 관리', icon: '📜' },
-  { key: 'login', label: '로그인', icon: '👤' },
+  { key: 'account', label: '계정 연동', icon: '🔗' },
   { key: 'settings', label: '설정', icon: '⚙️' },
 ];
 
@@ -25,7 +25,7 @@ export default function Menu({ open, onClose }) {
 
       {panel === 'history' && <Sheet title="이력 관리" onClose={() => setPanel(null)}><History /></Sheet>}
       {panel === 'settings' && <Sheet title="설정" onClose={() => setPanel(null)}><Settings /></Sheet>}
-      {panel === 'login' && <Sheet title="로그인" onClose={() => setPanel(null)}><Login /></Sheet>}
+      {panel === 'account' && <Sheet title="계정 연동" onClose={() => setPanel(null)}><Account /></Sheet>}
     </>
   );
 }
@@ -79,6 +79,21 @@ function Settings() {
   );
 }
 
-function Login() {
-  return <p className="hint">로그인은 곧 제공될 예정이에요. 지금은 단일 사용자로 동작합니다.</p>;
+function Account() {
+  const [acc, setAcc] = useState(null);
+  useEffect(() => { getAccount().then((d) => setAcc(d.account)).catch(() => setAcc(null)); }, []);
+  const id = uid();
+  return (
+    <div className="set">
+      <div className="acc-row">
+        <span className="badge-guest">게스트</span>
+        <span className="hint sm">기기에 저장된 ID 로 이용 중</span>
+      </div>
+      <label>내 게스트 ID
+        <input type="text" readOnly value={id || (acc?.user_key ?? '—')} onFocus={(e) => e.target.select()} />
+      </label>
+      <button className="primary" disabled title="곧 제공">🔗 OAuth 계정 연동 (곧 제공)</button>
+      <p className="hint sm">계정을 연동하면 이 게스트 기록이 그대로 그 계정으로 이어집니다.</p>
+    </div>
+  );
 }
