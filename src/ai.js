@@ -20,7 +20,7 @@ const SYSTEM = [
   '- 기록이 비었거나 오래됐으면, 오늘 첫 끼인지 / 마지막으로 먹은 게 언제·무엇인지 물어라.',
   '- 기록이 있어도 "마지막 기록 이후 따로 드신 게 있는지" 최소 한 번은 확인하라.',
   '- 한 번에 질문 하나만, 한국어로 간결하게. quick_replies 로 흔한 답 2~4개 제시.',
-  '- 충분히 파악되면 phase="decide": meals 에 오늘 관련 전체 타임라인(기존 기록+새로 확인된 끼)을, current 에 지금 항목을 채워라.',
+  '- 충분히 파악되면 phase="decide": meals 에는 "지금 항목 이전에 이미 먹은 끼"만 넣어라(기존 기록 + 되물어 새로 확인된 끼). 지금 물어보는 항목은 meals 에 넣지 말고 current 에만 둬라(아직 안 먹었으므로).',
   '- when 은 주어진 현재시각(now) 기준 ISO8601 절대시각으로 환산.',
   '공복 판정: 물·블랙커피·무가당차·무칼로리 전해질은 공복 안 깸(false). 칼로리·당·단백질·우유/크림은 깸(true).',
 ].join('\n');
@@ -33,7 +33,7 @@ const JSON_SPEC = [
   '  "question": "사용자에게 물을 질문(한국어, 하나)",',
   '  "quick_replies": ["흔한 답1", "흔한 답2"],',
   '  // phase=decide 일 때:',
-  '  "meals": [ { "when": "ISO8601", "what": "항목", "breaks_fast": true|false } ],',
+  '  "meals": [ { "when": "ISO8601", "what": "이미 먹은 항목", "breaks_fast": true|false } ],  // 지금 항목 제외, 과거 끼만',
   '  "current": { "what": "지금 항목", "breaks_fast": true|false, "reason": "한국어 한두문장" }',
   '}',
 ].join('\n');

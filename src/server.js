@@ -148,6 +148,7 @@ api.post('/ask', async (req, res, next) => {
     for (const m of out.meals || []) {
       const t = Date.parse(m.when);
       if (isNaN(t)) continue;
+      if (t >= now - 10 * 60 * 1000) continue; // 지금/미래 항목은 백필 금지(현재 물어보는 것은 '먹었어요' 확인 시에만 기록)
       if (existing.some((e) => Math.abs(e - t) < 5 * 60 * 1000)) continue; // ~5분 내 중복 제외
       await store.insertMeal(uk, new Date(t), m.what, { breaks_fast: m.breaks_fast }, '에이전트 백필');
     }
