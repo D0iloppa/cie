@@ -107,7 +107,15 @@ api.post('/ask', async (req, res, next) => {
     const recent = await store.listMeals(uk, 10);
     const dbMeals = recent.map((r) => ({ at: r.ate_at, what: r.label })).reverse();
 
-    const out = await runAgent(messages, { now, settings, dbMeals });
+    let out;
+    try {
+      out = await runAgent(messages, { now, settings, dbMeals });
+    } catch (e) {
+      console.error('[cie] agent 실패 → 결정론 폴백:', e.message);
+      const wrap = await buildStatus(uk);
+      const c = compose(wrap.status.state, wrap.status.canEat, null);
+      return res.json({ phase: 'decide', aiEnabled: true, degraded: true, label: readFood(req.body).label || null, verdict: null, timing: wrap.status, ...c });
+    }
 
     if (out.phase === 'ask') {
       const history = [...messages, { role: 'assistant', content: JSON.stringify(out) }];
