@@ -12,7 +12,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <button className="hamburger" aria-label="메뉴" onClick={() => setMenuOpen(true)}>
+      <button className={`hamburger ${menuOpen ? 'open' : ''}`} aria-label="메뉴" onClick={() => setMenuOpen((o) => !o)}>
         <span /><span /><span />
       </button>
       <Menu open={menuOpen} onClose={() => setMenuOpen(false)} />
