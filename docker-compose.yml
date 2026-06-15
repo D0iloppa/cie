@@ -1,0 +1,24 @@
+# Can I Eat — 독립 실행 compose. doil.me 게이트웨이와 같은 외부 네트워크(dev-net)에
+# 붙어, 게이트웨이 nginx 가 cie.doil.me → cie:3000 으로 프록시한다.
+#   docker compose up -d --build
+services:
+  cie:
+    build: .
+    container_name: cie
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - CIE_DB_PATH=/app/data/cie.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}   # 없으면 AI 기능만 비활성
+    volumes:
+      - cie_data:/app/data
+    networks:
+      - dev-net
+    restart: unless-stopped
+
+networks:
+  dev-net:
+    external: true
+
+volumes:
+  cie_data:

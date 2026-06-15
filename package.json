@@ -1,0 +1,19 @@
+{
+  "name": "cie",
+  "version": "0.1.0",
+  "description": "Can I Eat — 간헐적 단식 섭식 가능 여부 판정 + AI 음식 판단 (독립 실행)",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node test/verdict.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  }
+}
