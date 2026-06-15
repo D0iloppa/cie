@@ -1,4 +1,4 @@
-// Can I Eat — 독립 실행 서버. 정적 프론트 + /api/* 판정/기록 API.
+// Can I Eat — 독립 실행 서버. SPA 프론트(web/dist) + /api/* 판정/기록 API.
 // DB 는 공유 Postgres(devdb) 안의 전용 database `cie`.
 const path = require('path');
 const express = require('express');
@@ -7,9 +7,10 @@ const { computeStatus } = require('./verdict');
 const { judgeFood, aiEnabled } = require('./ai');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '8mb' })); // base64 사진 첨부 수용
 
 const PORT = Number(process.env.PORT || 3000);
+const WEB_DIST = path.join(__dirname, '..', 'web', 'dist');
 
 function userKey(req) {
   return (req.query.user || req.body?.user || 'me').toString().slice(0, 64);
@@ -26,39 +27,83 @@ async function buildStatus(uk) {
   return { user: uk, settings: s, aiEnabled: aiEnabled(), status };
 }
 
+// 타이밍 상태 + (선택)AI 음식판단 → 상징적 한 줄 결과.
+function compose(state, canEatTiming, verdict) {
+  const breaksFast = verdict ? verdict.breaks_fast : null;
+  const canEat = breaksFast === false ? true : canEatTiming;
+
+  let headline, tone;
+  switch (state) {
+    case 'first_meal':
+      headline = breaksFast === false ? '아직 첫 끼 아니에요' : '오늘 첫 끼예요';
+      tone = breaksFast === false ? 'yes' : 'first';
+      break;
+    case 'in_window':
+      headline = '지금 먹어도 돼요'; tone = 'yes'; break;
+    case 'ready_new_window':
+      headline = '먹어도 돼요'; tone = 'yes'; break;
+    case 'fasting':
+    default:
+      headline = breaksFast === false ? '이건 괜찮아요' : '지금은 참아요';
+      tone = breaksFast === false ? 'yes' : 'no';
+      break;
+  }
+
+  const message = verdict?.reason
+    || (canEat ? '지금 드셔도 괜찮아요.' : '아직 공복 시간이에요. 조금만 참아요.');
+
+  return { canEat, headline, tone, message };
+}
+
+// 입력(이미지/라벨) 정규화 — body 또는 멀티파트 대신 base64 JSON 사용.
+function readFood(body) {
+  const label = body?.label ? body.label.toString().trim() : null;
+  let image = null;
+  if (body?.image?.data && body?.image?.media_type) {
+    image = { media_type: body.image.media_type.toString(), data: body.image.data.toString() };
+  }
+  return { label, image };
+}
+
 const api = express.Router();
 
-// 지금 먹어도 되나? (타이밍 판정)
+// 지금 먹어도 되나? (타이밍만)
 api.get('/status', async (req, res, next) => {
+  try { res.json(await buildStatus(userKey(req))); } catch (e) { next(e); }
+});
+
+// 메인 질문: 먹/마실 것(텍스트 또는 사진) → 타이밍 + AI 판단을 합친 상징적 결과. 기록 안 함.
+api.post('/ask', async (req, res, next) => {
   try {
-    res.json(await buildStatus(userKey(req)));
+    const uk = userKey(req);
+    const { label, image } = readFood(req.body);
+    if (!label && !image) return res.status(400).json({ error: 'label 또는 image 가 필요합니다' });
+
+    const wrap = await buildStatus(uk);
+    let verdict = null;
+    try { verdict = await judgeFood({ label, image }); }
+    catch (e) { console.error('[cie] judgeFood failed:', e.message); }
+
+    const c = compose(wrap.status.state, wrap.status.canEat, verdict);
+    res.json({
+      aiEnabled: aiEnabled(),
+      label: verdict?.food || label || null,
+      verdict,
+      timing: wrap.status,
+      ...c,
+    });
   } catch (e) { next(e); }
 });
 
-// 먹기 전 질문: 이 항목이 공복을 깨나? (AI, 기록 안 함)
-api.post('/check', async (req, res, next) => {
-  try {
-    const label = (req.body?.label || '').toString().trim();
-    if (!label) return res.status(400).json({ error: 'label is required' });
-    const verdict = await judgeFood(label);
-    res.json({ aiEnabled: aiEnabled(), label, verdict });
-  } catch (e) { next(e); }
-});
-
-// 식사 기록 (선택적 AI 판단 포함)
+// 식사 기록 (결과 화면의 "먹었어요" 확인). label 은 /ask 가 식별한 음식명을 그대로 받는다.
 api.post('/log', async (req, res, next) => {
   try {
     const uk = userKey(req);
     const label = req.body?.label ? req.body.label.toString().trim() : null;
     const note = req.body?.note ? req.body.note.toString() : null;
+    const verdict = req.body?.verdict || null; // /ask 결과를 그대로 넘겨 재호출 비용 절약
     const ateAt = req.body?.ate_at ? new Date(req.body.ate_at) : new Date();
     if (isNaN(ateAt.getTime())) return res.status(400).json({ error: 'invalid ate_at' });
-
-    let verdict = null;
-    if (label) {
-      try { verdict = await judgeFood(label); }
-      catch (e) { console.error('[cie] judgeFood failed:', e.message); }
-    }
 
     const logged = await store.insertMeal(uk, ateAt, label, verdict, note);
     res.json({ logged, status: (await buildStatus(uk)).status });
@@ -95,7 +140,13 @@ api.put('/settings', async (req, res, next) => {
 });
 
 app.use('/api', api);
-app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// SPA: 정적 파일 + 비-API 경로는 index.html 로 폴백 (햄버거 메뉴 라우팅)
+app.use(express.static(WEB_DIST));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(WEB_DIST, 'index.html'));
+});
 
 app.use((err, req, res, _next) => {
   console.error('[cie] error:', err.message);
