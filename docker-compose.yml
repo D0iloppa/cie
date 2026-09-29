@@ -18,9 +18,12 @@ services:
       # AI 인증: claude CLI(Claude Code) OAuth 토큰 (`claude setup-token` 발급). 없으면 결정론 폴백.
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
     networks:
-      - dev-net
+      - edge   # §5 F-6B: gw ingress 공용망 (dev-net에서 이전)
+      - devdb   # §5 F-8: 메인 db(devdb) 전용망
     restart: unless-stopped
 
 networks:
-  dev-net:
+  edge:
+    external: true
+  devdb:
     external: true
